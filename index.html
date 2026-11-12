@@ -664,32 +664,43 @@ async function setupFirebase() {
 async function hydrateFromCloud() {
   if (!firebase?.db || !currentUser || currentUser.uid === "demo-owner") return;
   const { collection, getDocs, doc, getDoc } = firebase.firestore;
+  const readCollection = async (name) => (await getDocs(collection(firebase.db, name))).docs.map((item) => ({ id: item.id, ...item.data() }));
+  const safeCollection = async (name) => { try { return { ok: true, name, value: await readCollection(name) }; } catch (error) { console.warn(`Firestore ${name} read skipped`, error); return { ok: false, name, error }; } };
+  const safeDocument = async (name) => { try { return { ok: true, name, value: await getDoc(doc(firebase.db, name, "main")) }; } catch (error) { console.warn(`Firestore ${name}/main read skipped`, error); return { ok: false, name, error }; } };
   try {
-    const readCollection = async (name) => (await getDocs(collection(firebase.db, name))).docs.map((item) => ({ id: item.id, ...item.data() }));
-    const [orders, customers, suppliers, cargoFees, paymentSnapshot, statusSnapshot] = await Promise.all([
-      readCollection("orders"), readCollection("customers"), readCollection("suppliers"), readCollection("cargoFees"), getDoc(doc(firebase.db, "paymentSettings", "main")), getDoc(doc(firebase.db, "statusSettings", "main"))
+    const [ordersResult, customersResult, suppliersResult, cargoResult, paymentResult, statusResult, usersResult] = await Promise.all([
+      safeCollection("orders"), safeCollection("customers"), safeCollection("suppliers"), safeCollection("cargoFees"), safeDocument("paymentSettings"), safeDocument("statusSettings"), safeCollection("users")
     ]);
-    let users = [];
-    try { users = await readCollection("users"); } catch (userError) { console.warn("Team profile read skipped", userError); }
+    const orders = ordersResult.ok ? ordersResult.value : null;
+    const customers = customersResult.ok ? customersResult.value : null;
+    const suppliers = suppliersResult.ok ? suppliersResult.value : null;
+    const cargoFees = cargoResult.ok ? cargoResult.value : null;
+    const paymentSnapshot = paymentResult.ok ? paymentResult.value : null;
+    const statusSnapshot = statusResult.ok ? statusResult.value : null;
+    const users = usersResult.ok ? usersResult.value : [];
+    const failedReads = [ordersResult, customersResult, suppliersResult, cargoResult, paymentResult, statusResult].filter((result) => !result.ok).map((result) => result.name);
     const mergeRecords = (local, cloud) => { const map = new Map((local || []).map((item) => [item.id, item])); (cloud || []).forEach((item) => map.set(item.id, item)); return [...map.values()]; };
-    const cloudOrders = orders.map((item) => normalizeOrder({ ...item, amountThb: Number(item.amountThb || 0), rate: Number(item.rate || state.payments.defaultRate), supplierPercent: Number(item.supplierPercent || 0), cargoThb: Number(item.cargoThb || 0) }));
-    const cloudCustomers = customers; const cloudSuppliers = suppliers;
-    const cloudCargo = cargoFees.map((item) => ({ ...item, kg: Number(item.kg || 0), ratePerKg: Number(item.ratePerKg || 0), rate: Number(item.rate || state.payments.defaultRate) }));
+    const cloudOrders = (orders || []).map((item) => normalizeOrder({ ...item, amountThb: Number(item.amountThb || 0), rate: Number(item.rate || state.payments.defaultRate), supplierPercent: Number(item.supplierPercent || 0), cargoThb: Number(item.cargoThb || 0) }));
+    const cloudCustomers = customers || []; const cloudSuppliers = suppliers || [];
+    const cloudCargo = (cargoFees || []).map((item) => ({ ...item, kg: Number(item.kg || 0), ratePerKg: Number(item.ratePerKg || 0), rate: Number(item.rate || state.payments.defaultRate) }));
+    if (orders) state.orders = cloudOrders;
+    if (customers) state.customers = cloudCustomers;
+    if (suppliers) state.suppliers = cloudSuppliers;
+    if (cargoFees) state.cargoFees = cloudCargo;
     const cloudOrderIds = new Set(cloudOrders.map((item) => item.id));
     const demoOrderIds = new Set((demoState.orders || []).map((item) => item.id));
     const liveLocalOrders = (state.orders || []).filter((item) => !demoOrderIds.has(item.id) || cloudOrderIds.has(item.id));
     const cloudCustomerCodes = new Set(cloudCustomers.map((item) => item.code));
     const demoCustomerCodes = new Set((demoState.customers || []).map((item) => item.code));
     const liveLocalCustomers = (state.customers || []).filter((item) => !demoCustomerCodes.has(item.code) || cloudCustomerCodes.has(item.code));
-    state.orders = mergeRecords(liveLocalOrders, cloudOrders).map(normalizeOrder);
-    state.customers = mergeRecords(liveLocalCustomers, cloudCustomers); state.suppliers = mergeRecords(state.suppliers, cloudSuppliers); state.teamMembers = users.length ? users : (state.teamMembers || []);
-    state.cargoFees = mergeRecords(state.cargoFees, cloudCargo);
-    if (paymentSnapshot.exists()) state.payments = normalizePayments({ ...state.payments, ...paymentSnapshot.data() });
-    if (statusSnapshot.exists() && Array.isArray(statusSnapshot.data().statuses) && statusSnapshot.data().statuses.length) state.deliveryStatuses = statusSnapshot.data().statuses;
+    state.teamMembers = usersResult.ok && users.length ? users : (state.teamMembers || []);
+    if (paymentSnapshot?.exists()) state.payments = normalizePayments({ ...state.payments, ...paymentSnapshot.data() });
+    if (statusSnapshot?.exists() && Array.isArray(statusSnapshot.data().statuses) && statusSnapshot.data().statuses.length) state.deliveryStatuses = statusSnapshot.data().statuses;
     persistState();
+    if (failedReads.length) showToast(`Firebase read skipped: ${failedReads.join(", ")}. အဲဒီ collection rules ကို Publish လုပ်ပါ။`);
   } catch (error) {
-    persistState(); showToast("Firebase records could not be loaded. Existing local invoices were kept.");
-    console.warn("Firestore read skipped; local records preserved", error);
+    persistState(); showToast("Firebase records could not be loaded. Firebase project/rules ကိုစစ်ပါ။");
+    console.warn("Firestore hydration failed; current records preserved", error);
   }
 }
 async function enterWithUser(user) {
