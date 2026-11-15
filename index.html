@@ -277,6 +277,14 @@ td strong { color: var(--navy-900); font-weight: 800; }
   .modal-body, .modal-head { padding-left: 17px; padding-right: 17px; }
   .invoice-bottom { grid-template-columns: 1fr; }
 }
+
+/* Keep entry/refund forms above the fixed Operations Desk/sidebar on phone Desktop View. */
+#modalRoot { position: fixed; inset: 0; z-index: 9999; pointer-events: none; }
+#modalRoot > .modal-backdrop { position: fixed; inset: 0; z-index: 10000; width: 100vw; min-height: 100dvh; overflow-y: auto; pointer-events: auto; align-items: start; }
+#modalRoot .modal-card { position: relative; width: min(820px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); margin: 12px auto; }
+@media (max-width: 1060px) {
+  #modalRoot .modal-card { width: calc(100vw - 24px); max-width: calc(100vw - 24px); }
+}
 @media print {
   body > *:not(#printArea) { display: none !important; }
   #printArea { display: block !important; }
